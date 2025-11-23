@@ -6,3 +6,16 @@
 //
 
 import Foundation
+
+struct WeatherDay: Identifiable, Codable {
+    var id = UUID()
+    let date: Date
+    let temperature: Double
+    let cloudCover: Double
+
+    private enum CodingKeys: String, CodingKey {
+        case date
+        case temperature
+        case cloudCover
+    }
+}

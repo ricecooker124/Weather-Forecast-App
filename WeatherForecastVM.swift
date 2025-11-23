@@ -6,3 +6,10 @@
 //
 
 import Foundation
+import Combine
+
+@MainActor
+final class WeatherForecastVM: ObservableObject {
+    let weatherVM = WeatherVM()
+    init() { }
+}
