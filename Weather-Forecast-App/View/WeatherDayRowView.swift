@@ -47,3 +47,4 @@ struct WeatherDayRowView: View {
         cloudCover: 80
     ))
 }
+
