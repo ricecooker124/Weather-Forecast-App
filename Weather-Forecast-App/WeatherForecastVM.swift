@@ -58,7 +58,7 @@ final class WeatherForecastVM: ObservableObject {
             .receive(on: DispatchQueue.main)
             .assign(to: &$isSearching)
 
-        // mirror forecastVM -> main (SINGLE source of truth för fel/offline)
+        // mirror forecastVM -> main
         forecastVM.$forecast
             .receive(on: DispatchQueue.main)
             .assign(to: &$forecast)
@@ -92,7 +92,8 @@ final class WeatherForecastVM: ObservableObject {
             .store(in: &cancellables)
     }
 
-    // view calls this when user taps a place or result
+    // MARK: - Select place from search result
+
     func selectPlace(_ place: PlaceResult) {
         selectedLat = place.lat
         selectedLon = place.lon
@@ -100,11 +101,28 @@ final class WeatherForecastVM: ObservableObject {
         searchResults = []
         searchError = nil
 
-        // låt ForecastVM sköta all nätverks/offline/fel-logik
+        // ForecastVM sköter all nätverks/offline/fel-logik
         forecastVM.loadForecast(lat: place.lat, lon: place.lon)
     }
 
-    // quick API for view (LocationsView "Add to Favorites" + andra vyer)
+    // MARK: - Select place from favorite (överlagring)
+
+    func selectPlace(_ fav: FavoritePlace) {
+        selectedLat = fav.lat
+        selectedLon = fav.lon
+        placeText = fav.name
+        searchResults = []
+        searchError = nil
+
+        forecastVM.loadForecast(lat: fav.lat, lon: fav.lon)
+    }
+
+    func selectFavorite(_ fav: FavoritePlace) {
+        selectPlace(fav)
+    }
+
+    // MARK: - Favorites
+
     func addCurrentToFavorites() {
         guard let lat = selectedLat,
               let lon = selectedLon,
@@ -116,22 +134,6 @@ final class WeatherForecastVM: ObservableObject {
 
     func removeFavorite(_ fav: FavoritePlace) {
         favoritesVM.remove(fav)
-    }
-
-    func selectFavorite(_ fav: FavoritePlace) {
-        let place = PlaceResult(
-            geonameid: Int.random(in: 1...Int.max),
-            place: fav.name,
-            population: 0,
-            lon: fav.lon,
-            lat: fav.lat,
-            type: [],
-            municipality: "",
-            county: "",
-            country: "",
-            district: ""
-        )
-        selectPlace(place)
     }
 }
 
