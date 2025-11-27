@@ -1,70 +1,124 @@
-//
-//  WeatherParser.swift
-//  Weather-Forecast-App
-//
-//  Created by Simon Alam on 2025-11-21.
-//
-
 import Foundation
 
 struct WeatherParser {
-    private static let iso = ISO8601DateFormatter()
 
-    private static let dayFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd"
-        f.locale = Locale(identifier: "en_US_POSIX")
+    // SMHI tider är ISO8601 i UTC [web:21]
+    private static let iso: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         f.timeZone = TimeZone(secondsFromGMT: 0)
         return f
     }()
 
-    static func parse(_ response: WeatherResponse) -> [WeatherDay] {
-        typealias Agg = (tempSum: Double, tempCount: Int, cloudSum: Double, cloudCount: Int)
-        var aggregated: [String: Agg] = [:]
+    private static let fallbackISO: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        f.timeZone = TimeZone(secondsFromGMT: 0)
+        return f
+    }()
+
+    private static func dateFromISO(_ s: String) -> Date? {
+        if let d = iso.date(from: s) { return d }
+        return fallbackISO.date(from: s)
+    }
+
+    // MARK: - Hourly
+
+    static func parseHourly(from response: WeatherResponse) -> [WeatherHour] {
+        var hours: [WeatherHour] = []
 
         for entry in response.timeSeries {
-            guard let date = iso.date(from: entry.validTime) else { continue }
-            let dayKey = dayFormatter.string(from: date)
-            var temp: Double?
-            var cloud: Double?
+            let date = entry.validTime  // redan Date via JSONDecoder
 
-            for param in entry.parameters {
-                switch param.name {
+            var temp: Double = 0
+            var cloud: Double = 0
+            var wind: Double?
+            var precip: Double?
+
+            for p in entry.parameters {
+                switch p.name {
                 case "t":
-                    temp = param.values.first
+                    if let v = p.values.first { temp = v }
                 case "tcc_mean":
-                    if let octas = param.values.first {
-                        cloud = (octas / 8.0) * 100.0
+                    if let v = p.values.first {
+                        cloud = (v / 8.0) * 100.0
+                    }
+                case "ws", "ff":
+                    if let v = p.values.first { wind = v }
+                case "pmean", "pmax", "pmin", "pmedian":
+                    if let v = p.values.first { precip = v }
+                default:
+                    break
+                }
+            }
+
+            hours.append(
+                WeatherHour(
+                    date: date,
+                    temperature: temp,
+                    cloudCover: cloud,
+                    windSpeed: wind,
+                    precipitation: precip
+                )
+            )
+        }
+
+        hours.sort { $0.date < $1.date }
+        return hours
+    }
+
+    // MARK: - Daily (simple avg)
+
+    static func parseDaily(from response: WeatherResponse) -> [WeatherDay] {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+
+        typealias Agg = (tempSum: Double, tempCount: Int, cloudSum: Double, cloudCount: Int)
+        var agg: [Date: Agg] = [:]
+
+        for entry in response.timeSeries {
+            let date = entry.validTime
+            let dayKey = calendar.startOfDay(for: date)
+
+            var t: Double?
+            var c: Double?
+
+            for p in entry.parameters {
+                switch p.name {
+                case "t":
+                    t = p.values.first
+                case "tcc_mean":
+                    if let v = p.values.first {
+                        c = (v / 8.0) * 100.0
                     }
                 default:
                     break
                 }
             }
 
-            var agg = aggregated[dayKey] ?? (0,0,0,0)
-            if let t = temp {
-                agg.tempSum += t
-                agg.tempCount += 1
+            var a = agg[dayKey] ?? (0, 0, 0, 0)
+            if let tt = t {
+                a.tempSum += tt
+                a.tempCount += 1
             }
-            if let c = cloud {
-                agg.cloudSum += c
-                agg.cloudCount += 1
+            if let cc = c {
+                a.cloudSum += cc
+                a.cloudCount += 1
             }
-            aggregated[dayKey] = agg
+            agg[dayKey] = a
         }
 
-        let sortedKeys = aggregated.keys.sorted()
+        let sortedDays = agg.keys.sorted()
         var result: [WeatherDay] = []
 
-        for key in sortedKeys {
-            guard let agg = aggregated[key] else { continue }
-            let dateString = key + "T00:00:00Z"
-            let date = iso.date(from: dateString) ?? Date()
-            let tempAvg = agg.tempCount > 0 ? agg.tempSum / Double(agg.tempCount) : 0
-            let cloudAvg = agg.cloudCount > 0 ? agg.cloudSum / Double(agg.cloudCount) : 0
-            result.append(WeatherDay(date: date, temperature: tempAvg, cloudCover: cloudAvg))
+        for d in sortedDays {
+            guard let a = agg[d] else { continue }
+            let tAvg = a.tempCount > 0 ? a.tempSum / Double(a.tempCount) : 0
+            let cAvg = a.cloudCount > 0 ? a.cloudSum / Double(a.cloudCount) : 0
+            result.append(WeatherDay(date: d, temperature: tAvg, cloudCover: cAvg))
         }
 
-        return result
+        return Array(result.prefix(7))
     }
 }
+

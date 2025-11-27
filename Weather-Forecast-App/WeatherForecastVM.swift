@@ -1,9 +1,5 @@
-//
-//  WeatherForecastVM.swift
-//  Weather-Forecast-App
-//
-//  Created by Simon Alam on 2025-11-23.
-//
+// WeatherForecastVM.swift
+// Main VM — view binds only to this. Mirrors sub-VMs and exposes simple API.
 
 import Foundation
 import Combine
@@ -11,25 +7,27 @@ import Combine
 @MainActor
 final class WeatherForecastVM: ObservableObject {
 
-    // Sub VMs (private ownership)
+    // sub VMs (private ownership)
     let searchVM = PlaceSearchVM()
     let forecastVM = ForecastVM()
     let favoritesVM = FavoritesVM()
 
-    // Published mirrors for the View (view observes ONLY main VM)
+    private var cancellables = Set<AnyCancellable>()
+
+    // Exposed to view
     @Published var placeText: String = ""
     @Published var searchResults: [PlaceResult] = []
     @Published var searchError: String?
     @Published var isSearching: Bool = false
 
     @Published var forecast: [WeatherDay] = []
+    @Published var hourly: [WeatherHour] = []
     @Published var isLoading: Bool = false
     @Published var forecastError: String?
     @Published var isOffline: Bool = false
 
     @Published var favorites: [FavoritePlace] = []
 
-    private var cancellables = Set<AnyCancellable>()
     private var selectedLat: Double?
     private var selectedLon: Double?
 
@@ -39,15 +37,15 @@ final class WeatherForecastVM: ObservableObject {
     }
 
     private func bindChildren() {
-        // Forward placeText changes FROM main -> sub
+        // forward main -> searchVM
         $placeText
             .removeDuplicates()
-            .sink { [weak self] new in
-                self?.searchVM.placeText = new
+            .sink { [weak self] text in
+                self?.searchVM.placeText = text
             }
             .store(in: &cancellables)
 
-        // Mirror searchVM -> main published properties
+        // mirror searchVM -> main
         searchVM.$searchResults
             .receive(on: DispatchQueue.main)
             .assign(to: &$searchResults)
@@ -60,10 +58,14 @@ final class WeatherForecastVM: ObservableObject {
             .receive(on: DispatchQueue.main)
             .assign(to: &$isSearching)
 
-        // Mirror forecastVM -> main published properties
+        // mirror forecastVM -> main (SINGLE source of truth för fel/offline)
         forecastVM.$forecast
             .receive(on: DispatchQueue.main)
             .assign(to: &$forecast)
+
+        forecastVM.$hourly
+            .receive(on: DispatchQueue.main)
+            .assign(to: &$hourly)
 
         forecastVM.$isLoading
             .receive(on: DispatchQueue.main)
@@ -77,12 +79,12 @@ final class WeatherForecastVM: ObservableObject {
             .receive(on: DispatchQueue.main)
             .assign(to: &$isOffline)
 
-        // Mirror favoritesVM -> main
+        // favorites
         favoritesVM.$favorites
             .receive(on: DispatchQueue.main)
             .assign(to: &$favorites)
 
-        // Listen for autoSelected from searchVM
+        // auto selection from searchVM
         searchVM.autoSelected
             .sink { [weak self] place in
                 self?.selectPlace(place)
@@ -90,7 +92,7 @@ final class WeatherForecastVM: ObservableObject {
             .store(in: &cancellables)
     }
 
-    // Called by view when user taps result or when autoSelected emits
+    // view calls this when user taps a place or result
     func selectPlace(_ place: PlaceResult) {
         selectedLat = place.lat
         selectedLon = place.lon
@@ -98,12 +100,16 @@ final class WeatherForecastVM: ObservableObject {
         searchResults = []
         searchError = nil
 
+        // låt ForecastVM sköta all nätverks/offline/fel-logik
         forecastVM.loadForecast(lat: place.lat, lon: place.lon)
     }
 
-    // Favorites API (use favoritesVM)
+    // quick API for view (LocationsView "Add to Favorites" + andra vyer)
     func addCurrentToFavorites() {
-        guard let lat = selectedLat, let lon = selectedLon, !placeText.isEmpty else { return }
+        guard let lat = selectedLat,
+              let lon = selectedLon,
+              !placeText.isEmpty else { return }
+
         let fav = FavoritePlace(name: placeText, lat: lat, lon: lon)
         favoritesVM.add(fav)
     }
@@ -113,11 +119,19 @@ final class WeatherForecastVM: ObservableObject {
     }
 
     func selectFavorite(_ fav: FavoritePlace) {
-        // Create a minimal PlaceResult and feed selectPlace
-        let place = PlaceResult(geonameid: Int.random(in: 1...Int.max),
-                                place: fav.name, population: 0,
-                                lon: fav.lon, lat: fav.lat,
-                                type: [], municipality: "", county: "", country: "", district: "")
+        let place = PlaceResult(
+            geonameid: Int.random(in: 1...Int.max),
+            place: fav.name,
+            population: 0,
+            lon: fav.lon,
+            lat: fav.lat,
+            type: [],
+            municipality: "",
+            county: "",
+            country: "",
+            district: ""
+        )
         selectPlace(place)
     }
 }
+

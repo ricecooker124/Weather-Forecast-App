@@ -6,6 +6,8 @@
 //
 
 
+// PlaceResult.swift
+// Matches API JSON
 import Foundation
 
 struct PlaceResult: Identifiable, Codable {

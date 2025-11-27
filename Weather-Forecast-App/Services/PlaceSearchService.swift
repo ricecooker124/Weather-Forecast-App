@@ -1,53 +1,57 @@
-//
-//  PlaceSearchService.swift
-//  Weather-Forecast-App
-//
-
-
-// PlaceSearchService.swift
 import Foundation
 import Combine
 
-enum PlaceSearchError: Error, LocalizedError {
-    case badURL
-    case noResults
-    case decodingFailed
-
-    var errorDescription: String? {
-        switch self {
-        case .badURL:
-            return "Ogiltig sök-URL."
-        case .noResults:
-            return "Hittade inga platser."
-        case .decodingFailed:
-            return "Kunde inte tolka platsdata."
-        }
-    }
-}
-
 final class PlaceSearchService {
-    private let baseURL = "https://maceo.sth.kth.se/weather/search?location="
 
-    func searchPlace(_ query: String) -> AnyPublisher<[PlaceResult], Error> {
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            return Fail(error: PlaceSearchError.badURL).eraseToAnyPublisher()
-        }
+    func searchPublisher(for query: String) -> AnyPublisher<[PlaceResult], Error> {
+        let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
 
-        let urlString = baseURL + trimmed
-        guard let encoded = urlString.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-              let url = URL(string: encoded) else {
-            return Fail(error: PlaceSearchError.badURL).eraseToAnyPublisher()
+        let urlString =
+        "https://www.smhi.se/wpt-a/backend_solr/autocomplete/search/\(encoded)?type=autocomplete"
+
+        guard let url = URL(string: urlString) else {
+            return Fail(error: URLError(.badURL)).eraseToAnyPublisher()
         }
 
         return URLSession.shared.dataTaskPublisher(for: url)
-            .subscribe(on: DispatchQueue.global(qos: .background))
-            .map(\.data)
-            .tryMap { data -> [PlaceResult] in
-                do {
-                    return try JSONDecoder().decode([PlaceResult].self, from: data)
-                } catch {
-                    throw PlaceSearchError.decodingFailed
+            .tryMap { data, response in
+                guard let http = response as? HTTPURLResponse,
+                      (200...299).contains(http.statusCode) else {
+                    throw URLError(.badServerResponse)
+                }
+
+                // parse JSON manually (SMHI uses mixed types)
+                let json = try JSONSerialization.jsonObject(with: data, options: [])
+                guard let array = json as? [[String: Any]] else { return [] }
+
+                return array.compactMap { dict in
+                    guard
+                        let geonameid = dict["geonameid"] as? Int,
+                        let place = dict["place"] as? String,
+                        let population = dict["population"] as? Int,
+                        let lon = dict["lon"] as? Double,
+                        let lat = dict["lat"] as? Double,
+                        let type = dict["type"] as? [String],
+                        let municipality = dict["municipality"] as? String,
+                        let county = dict["county"] as? String,
+                        let country = dict["country"] as? String,
+                        let district = dict["district"] as? String
+                    else {
+                        return nil
+                    }
+
+                    return PlaceResult(
+                        geonameid: geonameid,
+                        place: place,
+                        population: population,
+                        lon: lon,
+                        lat: lat,
+                        type: type,
+                        municipality: municipality,
+                        county: county,
+                        country: country,
+                        district: district
+                    )
                 }
             }
             .receive(on: DispatchQueue.main)

@@ -1,8 +1,3 @@
-//
-//  PlaceSearchVM.swift
-//  Weather-Forecast-App
-//
-
 import Foundation
 import Combine
 
@@ -13,7 +8,6 @@ final class PlaceSearchVM: ObservableObject {
     @Published var errorMessage: String?
     @Published var isSearching: Bool = false
 
-    /// autoSelected emits a PlaceResult when we want MainVM to select it (single hit or user tap)
     let autoSelected = PassthroughSubject<PlaceResult, Never>()
 
     private let service = PlaceSearchService()
@@ -25,17 +19,18 @@ final class PlaceSearchVM: ObservableObject {
 
     private func setupPipeline() {
         $placeText
-            .removeDuplicates()
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .sink { [weak self] trimmed in
+            .removeDuplicates()
+            .debounce(for: .milliseconds(250), scheduler: DispatchQueue.main)
+            .sink { [weak self] query in
                 guard let self = self else { return }
-                if trimmed.isEmpty {
+
+                if query.isEmpty {
                     self.searchResults = []
                     self.errorMessage = nil
-                    return
+                } else {
+                    self.performSearch(query: query)
                 }
-                // perform search (no debounce; you asked no debounce)
-                self.performSearch(query: trimmed)
             }
             .store(in: &cancellables)
     }
@@ -45,36 +40,38 @@ final class PlaceSearchVM: ObservableObject {
         errorMessage = nil
         searchResults = []
 
-        service.searchPlace(query)
+        service.searchPublisher(for: query)
             .sink { [weak self] completion in
                 guard let self = self else { return }
+
                 self.isSearching = false
+
                 switch completion {
+                case .failure(let err):
+                    self.errorMessage = err.localizedDescription
+                    self.searchResults = []
                 case .finished:
                     break
-                case .failure(let error):
-                    self.errorMessage = error.localizedDescription
-                    self.searchResults = []
                 }
             } receiveValue: { [weak self] places in
                 guard let self = self else { return }
+
                 if places.isEmpty {
                     self.errorMessage = "Hittade inga platser."
                     self.searchResults = []
-                    return
                 }
-                if places.count == 1 {
-                    // auto select
+                else if places.count == 1 {
+                    // auto-select a single result
                     self.searchResults = []
                     self.autoSelected.send(places[0])
-                    return
                 }
-                self.searchResults = places
+                else {
+                    self.searchResults = places
+                }
             }
             .store(in: &cancellables)
     }
 
-    /// Called by view when user taps an item
     func userSelected(place: PlaceResult) {
         searchResults = []
         autoSelected.send(place)

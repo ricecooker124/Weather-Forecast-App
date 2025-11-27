@@ -1,25 +1,17 @@
-//
-//  FavoritesVM.swift
-//  Weather-Forecast-App
-//
-//  Created by Amiin Sabriya on 2025-11-24.
-//
-
+// FavoritesVM.swift
 import Foundation
 import Combine
 
 @MainActor
 final class FavoritesVM: ObservableObject {
     @Published var favorites: [FavoritePlace] = []
-
-    private let storage = FavoriteStorage()
+    private let storage = FavouriteStorage()
 
     init() {
         favorites = storage.load()
     }
 
     func add(_ fav: FavoritePlace) {
-        guard !favorites.contains(fav) else { return }
         favorites.append(fav)
         storage.save(favorites)
     }

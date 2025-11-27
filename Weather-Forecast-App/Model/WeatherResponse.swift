@@ -1,33 +1,27 @@
-//
-//  WeatherResponse.swift
-//  Weather-Forecast-App
-//
-//  Created by Simon Alam on 2025-11-21.
-//
-
 import Foundation
 
-struct WeatherResponse: Codable {
-    let approvedTime: String
-    let referenceTime: String
+struct WeatherResponse: Decodable {
+    let approvedTime: Date
+    let referenceTime: Date
     let geometry: Geometry
-    let timeSeries: [TimeSeriesEntry]
+    let timeSeries: [TimeSeries]
+
+    struct Geometry: Decodable {
+        let type: String
+        let coordinates: [[Double]]
+    }
+
+    struct TimeSeries: Decodable {
+        let validTime: Date
+        let parameters: [Parameter]
+    }
+
+    struct Parameter: Decodable {
+        let name: String
+        let levelType: String
+        let level: Int
+        let unit: String
+        let values: [Double]
+    }
 }
 
-struct Geometry: Codable {
-    let type: String
-    let coordinates: [[Double]]
-}
-
-struct TimeSeriesEntry: Codable {
-    let validTime: String
-    let parameters: [Parameter]
-}
-
-struct Parameter: Codable {
-    let name: String
-    let levelType: String
-    let level: Int
-    let unit: String
-    let values: [Double]
-}

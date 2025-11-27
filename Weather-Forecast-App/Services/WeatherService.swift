@@ -1,60 +1,69 @@
-//
-//  WeatherService.swift
-//  Weather-Forecast-App
-//
-//  Created by Simon Alam on 2025-11-21.
-//
-
-// WeatherService.swift
-// WeatherService.swift
 import Foundation
 import Combine
 
-enum WeatherServiceError: Error, LocalizedError {
-    case badURL
-    case requestFailed
-    case decodingFailed
-    case noData
+final class WeatherService {
 
-    var errorDescription: String? {
-        switch self {
-        case .badURL:
-            return "Ogiltig URL."
-        case .requestFailed:
-            return "Kunde inte hämta data från servern."
-        case .decodingFailed:
-            return "Kunde inte tolka väderdatat."
-        case .noData:
-            return "Inget data från servern."
+    enum WeatherError: Error, LocalizedError {
+        case invalidURL
+        case httpError(status: Int, body: String?)
+        case decodeError
+
+        var errorDescription: String? {
+            switch self {
+            case .invalidURL:
+                return "Invalid URL."
+            case .httpError(let status, _):
+                return "Server returned HTTP \(status)."
+            case .decodeError:
+                return "Could not decode weather data."
+            }
         }
     }
-}
 
-final class WeatherService {
-    private let baseURL = "https://maceo.sth.kth.se/weather/forecast"
+    private let decoder: JSONDecoder = {
+        let d = JSONDecoder()
+        d.dateDecodingStrategy = .iso8601
+        return d
+    }()
 
-    func fetchForecastPublisher(lat: Double, lon: Double) -> AnyPublisher<[WeatherDay], Error> {
-        var components = URLComponents(string: baseURL)
-        components?.queryItems = [
-            URLQueryItem(name: "lonLat", value: "lon/\(lon)/lat/\(lat)")
-        ]
+    /// SMHI funkar bra med 1 decimal
+    private func roundCoord(_ value: Double) -> String {
+        String(format: "%.1f", value)
+    }
 
-        guard let url = components?.url else {
-            return Fail(error: WeatherServiceError.badURL).eraseToAnyPublisher()
+    func fetchForecast(lat: Double, lon: Double) -> AnyPublisher<WeatherResponse, Error> {
+        let latStr = roundCoord(lat)
+        let lonStr = roundCoord(lon)
+
+        // PMP3g point-API [web:48][web:51]
+        let urlString =
+        "https://opendata-download-metfcst.smhi.se/api/category/pmp3g/version/2/geotype/point/lon/\(lonStr)/lat/\(latStr)/data.json"
+
+        guard let url = URL(string: urlString) else {
+            return Fail(error: WeatherError.invalidURL).eraseToAnyPublisher()
         }
 
+        print("[WeatherService] URL → \(url.absoluteString)")
+
         return URLSession.shared.dataTaskPublisher(for: url)
-            .subscribe(on: DispatchQueue.global(qos: .background))
-            .map(\.data)
-            .tryMap { data in
-                do {
-                    let apiResponse = try JSONDecoder().decode(WeatherResponse.self, from: data)
-                    return WeatherParser.parse(apiResponse)
-                } catch {
-                    throw WeatherServiceError.decodingFailed
+            .tryMap { output in
+                guard let http = output.response as? HTTPURLResponse else {
+                    throw URLError(.badServerResponse)
                 }
+                guard http.statusCode == 200 else {
+                    let bodyString = String(data: output.data, encoding: .utf8)
+                    print("[WeatherService] HTTP \(http.statusCode)")
+                    print("[WeatherService] BODY:\n\(bodyString ?? "(nil)")")
+                    throw WeatherError.httpError(status: http.statusCode, body: bodyString)
+                }
+                return output.data
             }
-            .receive(on: DispatchQueue.main)
+            .decode(type: WeatherResponse.self, decoder: decoder)
+            .mapError { err in
+                print("[WeatherService] Decode error: \(err)")
+                return err
+            }
             .eraseToAnyPublisher()
     }
 }
+

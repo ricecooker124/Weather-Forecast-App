@@ -1,32 +1,25 @@
-//
-//  FavouriteStorage.swift
-//  Weather-Forecast-App
-//
-//  Created by Amiin Sabriya on 2025-11-24.
-//
-
-
+// FavouriteStorage.swift
 import Foundation
 
-final class FavoriteStorage {
-    private let key = "favorite_places_v1"
+final class FavouriteStorage {
+    private let file = "favorites.json"
+    private var url: URL? {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?.appendingPathComponent(file)
+    }
 
-    func load() -> [FavoritePlace] {
-        guard let data = UserDefaults.standard.data(forKey: key) else { return [] }
+    func save(_ list: [FavoritePlace]) {
+        guard let u = url else { return }
         do {
-            return try JSONDecoder().decode([FavoritePlace].self, from: data)
+            let data = try JSONEncoder().encode(list)
+            try data.write(to: u)
         } catch {
-            print("FavoriteStorage: decode failed:", error)
-            return []
+            print("FavouriteStorage.save failed:", error)
         }
     }
 
-    func save(_ places: [FavoritePlace]) {
-        do {
-            let data = try JSONEncoder().encode(places)
-            UserDefaults.standard.set(data, forKey: key)
-        } catch {
-            print("FavoriteStorage: encode failed:", error)
-        }
+    func load() -> [FavoritePlace] {
+        guard let u = url, FileManager.default.fileExists(atPath: u.path) else { return [] }
+        do { return try JSONDecoder().decode([FavoritePlace].self, from: Data(contentsOf: u)) }
+        catch { print("FavouriteStorage.load failed:", error); return [] }
     }
 }

@@ -1,56 +1,84 @@
-//
-//  ForecastVM.swift
-//  Weather-Forecast-App
-//
-//  Created by Amiin Sabriya on 2025-11-24.
-//
-//
-
-
 import Foundation
 import Combine
 
 @MainActor
 final class ForecastVM: ObservableObject {
+
     @Published var forecast: [WeatherDay] = []
+    @Published var hourly: [WeatherHour] = []
     @Published var isLoading: Bool = false
     @Published var errorMessage: String?
     @Published var isOffline: Bool = false
 
     private let service = WeatherService()
-    private let storage = WeatherStorage()
+    let storage = WeatherStorage()
     private var cancellables = Set<AnyCancellable>()
+    private let networkMonitor = NetworkMonitor.shared
 
     init() {
-        // restore cached forecast on start
         forecast = storage.loadForecast()
+        hourly = storage.loadHourly()
+
+        if !networkMonitor.isConnected {
+            isOffline = true
+            errorMessage = "Offline – showing cached data."
+        }
     }
 
     func loadForecast(lat: Double, lon: Double) {
         errorMessage = nil
         isOffline = false
+
+        if !networkMonitor.isConnected {
+            useCachedDataOffline()
+            return
+        }
+
         isLoading = true
 
-        service.fetchForecastPublisher(lat: lat, lon: lon)
+        service.fetchForecast(lat: lat, lon: lon)
             .sink { [weak self] completion in
                 guard let self = self else { return }
                 self.isLoading = false
+
                 switch completion {
                 case .finished:
                     break
-                case .failure(let error):
-                    self.errorMessage = error.localizedDescription
-                    let cached = self.storage.loadForecast()
-                    if !cached.isEmpty {
-                        self.forecast = cached
+                case .failure(let err):
+                    let cachedDaily = self.storage.loadForecast()
+                    let cachedHourly = self.storage.loadHourly()
+
+                    if !cachedDaily.isEmpty || !cachedHourly.isEmpty {
                         self.isOffline = true
+                        self.forecast = cachedDaily
+                        self.hourly = cachedHourly
+                        self.errorMessage = "Could not fetch updated data — showing cache."
+                    } else {
+                        self.errorMessage = err.localizedDescription
                     }
                 }
-            } receiveValue: { [weak self] days in
+            } receiveValue: { [weak self] response in
                 guard let self = self else { return }
-                self.forecast = Array(days.prefix(7))
-                self.storage.saveForecast(self.forecast)
+                let hours = WeatherParser.parseHourly(from: response)
+                let days  = WeatherParser.parseDaily(from: response)
+
+                self.hourly = hours
+                self.forecast = days
+
+                self.storage.saveHourly(hours)
+                self.storage.saveForecast(days)
+
+                self.errorMessage = nil
+                self.isOffline = false
             }
             .store(in: &cancellables)
     }
+
+    private func useCachedDataOffline() {
+        isOffline = true
+        errorMessage = "Offline – showing cached data."
+        forecast = storage.loadForecast()
+        hourly = storage.loadHourly()
+    }
 }
+
